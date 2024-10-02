@@ -1,0 +1,731 @@
+---
+title: "Granuloma feature extraction and classification"
+author: "Federico Arboleda"
+date: "2023-2024"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r load-packages-and-data, message = FALSE, warning = FALSE}
+library(EBImage)
+library(tidyverse)
+library(knitr)
+library(gplots)
+library(cluster)
+library(NbClust)
+library(factoextra)
+library(mclust)
+imageList <- system("ls *.png", intern = TRUE)
+```
+
+
+```{r immune-cell-analysis}
+matrix_of_values <- matrix(1:48, nrow = 1)
+
+# summary statistics function
+summaries_func <- function(x) {
+  col_min <- min(x)
+  col_10 <- quantile(x, 0.1)
+  col_25 <- quantile(x, 0.25)
+  col_mean <- mean(x)
+  col_med <- median(x)
+  col_75 <- quantile(x, 0.75)
+  col_90 <- quantile(x, 0.9)
+  col_max <- max(x)
+  c(
+    Min = col_min, Tenth = col_10, TwenFifth = col_25, Mean = col_mean,
+    Median = col_med, SevFifth = col_75, Nintieth = col_90, Max = col_max
+  )
+}
+
+for (file in imageList) {
+  img <- readImage(file)
+
+  # prep for segmentation
+  img_gray <- channel(img, "gray")
+  img_neg <- max(img_gray) - img_gray
+  x <- thresh(img_neg, 5, 5, 0.0001)
+  y <- EBImage::opening(x, makeBrush(5, shape = "disc"))
+  z <- bwlabel(y)
+
+  ## compute shape features
+  fts <- computeFeatures.shape(z)
+
+  # turn feature statistics to dataframe
+  fts_df <- as.data.frame(fts)
+
+  # find summary stats for each column
+  summary_stats <- sapply(fts_df, summaries_func)
+  summary_vec <- as.vector(summary_stats)
+  matrix_of_values <- rbind(matrix_of_values, summary_vec)
+}
+
+summary_matrix <- matrix_of_values[-1, ]
+new_column_names <- c(
+  "ImmArea Min", "ImmArea 10th", "ImmArea 25th", "ImmArea Mean", "ImmArea Med",
+  "ImmArea 75th", "ImmArea 90th", "ImmArea Max",
+  "ImmPer Min", "ImmPer 10th", "ImmPer 25th", "ImmPer Mean", "ImmPer Med",
+  "ImmPer 75th", "ImmPer 90th", "ImmPer Max",
+  "ImmRadMean Min", "ImmRadMean 10th", "ImmRadMean 25th", "ImmRadMean Mean",
+  "ImmRadMean Med", "ImmRadMean 75th", "ImmRadMean 90th", "ImmRadMean Max",
+  "ImmRadSD Min", "ImmRadSD 10th", "ImmRadSD 25th", "ImmRadSD Mean",
+  "ImmRadSD Med", "ImmRadSD 75th", "ImmRadSD 90th", "ImmRadSD Max",
+  "ImmRadMin Min", "ImmRadMin 10th", "ImmRadMin 25th", "ImmRadMin Mean",
+  "ImmRadMin Med", "ImmRadMin 75th", "ImmRadMin 90th", "ImmRadMin Max",
+  "ImmRadMax Min", "ImmRadMax 10th", "ImmRadMax 25th", "ImmRadMax Mean",
+  "ImmRadMax Med", "ImmRadMax 75th", "ImmRadMax 90th", "ImmRadMax Max"
+)
+colnames(summary_matrix) <- new_column_names
+immune_matrix <- as.data.frame(summary_matrix)
+rownames(immune_matrix) <- c(1:length(imageList))
+```
+
+
+```{r tesselation-analysis}
+shape <- data.frame()
+moment <- data.frame()
+coords <- data.frame()
+all_sizes <- c()
+all_radius_sd <- c()
+all_major_axis <- c()
+gran_coords <- c()
+
+for (i in 1:length(imageList)) {
+  img <- readImage(imageList[i])
+
+  ## pad image out to x and y dimensions that are a  mult of ten
+  ## so can apply same scaling when using clahe()
+  old.dim <- dim(img)
+  new.dim <- c(10 * ceiling(dim(img) / 10)[1:2], 4)
+  temp <- array(0.0, new.dim)
+  temp <- as.Image(temp)
+  temp[1:old.dim[1], 1:old.dim[2], 1:old.dim[3]] <- img
+  img <- temp
+
+  ## greyscale version:
+  img1.gy <- img
+  colorMode(img1.gy) <- Grayscale
+  img1f1.gy <- getFrame(img1.gy, 1)
+  nmask <- thresh(img1f1.gy, w = 5, h = 5, offset = 0.01)
+  nmask <- EBImage::opening(nmask, makeBrush(5, shape = "disc"))
+  nmask <- fillHull(nmask)
+  nmask <- bwlabel(nmask)
+  ## Voronoi tesselation:
+  v1 <- propagate(seeds = nmask, x = nmask, lambda = 10000)
+  v1[img1f1.gy == 0] <- 0
+  v1.col <- colorLabels(v1)
+  img1.seg <- paintObjects(v1, img1f1.gy, col = "black")
+
+  ## Immune cell coordinates
+  ydim <- attributes(nmask)$dim[2] # Image dimension y-axis
+  xdim <- attributes(nmask)$dim[1] # Image dimension x-axis
+  plot(c(0, xdim), c(0, ydim), type = "n")
+  rasterImage(nmask, 0, 0, xdim, ydim)
+  threshold <- 0.5
+  binary_img <- nmask > threshold
+  white_coordinates <- which(binary_img, arr.ind = TRUE)
+  white_coordinates[, 2] <- desc(white_coordinates[, 2]) + ydim
+  white_coordinates <- as.data.frame(white_coordinates)
+  white_coordinates$image <- i
+  coords <- rbind(coords, white_coordinates)
+
+  # Matrix of features for tesselations/calculations
+  tess_shape_inv <- computeFeatures.shape(v1, properies = TRUE)
+  tess_moments_inv <- computeFeatures.moment(v1, properies = TRUE)
+  tess_features <- as.data.frame(cbind(tess_shape_inv, tess_moments_inv))
+  tess_features <- tess_features |> filter(log(s.radius.sd) < 4.5)
+  tess_sizes <- tess_features[, 1]
+  gran_spots <- tess_sizes[tess_sizes > 1000]
+
+  # Tesselation locations
+  tess_features$image <- i
+  tess_features$m.cy <- desc(tess_features$m.cy) + ydim
+  gran_coords <- rbind(gran_coords, tess_features |> select(s.area, m.cx, m.cy, image))
+
+  # Tesselation shape matrix
+  shape_vec <- rbind(
+    mean(tess_features[, 1]),
+    mean(tess_features[, 2]),
+    mean(tess_features[, 3]),
+    mean(tess_features[, 4]),
+    mean(tess_features[, 5]),
+    mean(tess_features[, 6]),
+    quantile(tess_features[, 1], .9),
+    quantile(tess_features[, 2], .9),
+    quantile(tess_features[, 3], .9),
+    quantile(tess_features[, 4], .9),
+    quantile(tess_features[, 5], .9),
+    quantile(tess_features[, 6], .9),
+    quantile(tess_features[, 1], .5),
+    quantile(tess_features[, 1], .95),
+    quantile(tess_features[, 1], .99),
+    length(gran_spots),
+    length(gran_spots) / length(tess_sizes),
+    sum(gran_spots) / sum(tess_sizes)
+  )
+
+  shape <- bind_rows(shape, as.data.frame(t(shape_vec)))
+
+  ## Tesselation moments matrix
+  moment_vec <- rbind(
+    mean(tess_features[, 7]),
+    mean(tess_features[, 8]),
+    mean(tess_features[, 9]),
+    mean(tess_features[, 10]),
+    mean(tess_features[, 11]),
+    quantile(tess_features[, 7], .9),
+    quantile(tess_features[, 8], .9),
+    quantile(tess_features[, 9], .9),
+    quantile(tess_features[, 10], .9),
+    quantile(tess_features[, 11], .9)
+  )
+
+  moment <- bind_rows(moment, as.data.frame(t(moment_vec)))
+
+  all_sizes <- c(all_sizes, tess_features[, 1])
+  all_radius_sd <- c(all_radius_sd, tess_features[, 5])
+  all_major_axis <- c(all_major_axis, tess_features[, 9])
+  hist(tess_features[, 1], main = "Distribution of tesselation areas", breaks = 20)
+}
+
+colnames(coords) <- c(
+  "x", "y", "Image_num"
+)
+
+rownames(shape) <- c(1:length(imageList))
+
+colnames(shape) <- c(
+  "Area mean", "Perimiter mean", "Radius mean mean",
+  "Radius SD mean", "Radius min mean", "Radius max mean",
+  "Area 90th", "Perimiter 90th", "Radius mean 90th",
+  "Radius SD 90th", "Radius min 90th", "Radius max 90th",
+  "Area median", "Area 95th", "Area 99th", "Num Large Tess",
+  "Prop granuloma tesselations", "Prop tesselation area"
+)
+
+rownames(moment) <- c(1:length(imageList))
+
+colnames(moment) <- c(
+  "X coord mean", "Y coord mean", "Major axis mean",
+  "Eccentricity mean", "Theta mean",
+  "X coord 90th", "Y coord 90th", "Major axis 90th",
+  "Eccentricity 90th", "Theta 90th"
+)
+
+hist(all_sizes, breaks = 40)
+# hist(log(all_radius_sd), breaks = 40)
+# hist(log(all_major_axis), breaks = 40)
+```
+
+
+```{r tesselation-analysis-detailed}
+shape_det <- data.frame()
+moment_det <- data.frame()
+coords_det <- data.frame()
+all_sizes_det <- c()
+all_radius_sd_det <- c()
+all_major_axis_det <- c()
+gran_coords_det <- c()
+
+for (i in 1:length(imageList)) {
+  img <- readImage(imageList[i])
+
+  ## pad image out to x and y dimensions that are a mult of ten
+  ## so can apply same scaling when using clahe()
+  old.dim <- dim(img)
+  new.dim <- c(10 * ceiling(dim(img) / 10)[1:2], 4)
+  temp <- array(0.0, new.dim)
+  temp <- as.Image(temp)
+  temp[1:old.dim[1], 1:old.dim[2], 1:old.dim[3]] <- img
+  img <- temp
+
+  ## greyscale version:
+  img1.gy <- img
+  colorMode(img1.gy) <- Grayscale
+  img1f1.gy <- getFrame(img1.gy, 1)
+  img1.gy <- clahe(img1.gy, nx = 5, ny = 5, limit = 2)
+  img1.sh <- clahe(img1.gy, nx = 10, ny = 10, limit = 2)
+  nmask <- (getFrame(img1.sh, 1) < otsu(getFrame(img1.sh, 1)))
+  nmask <- fillHull(nmask)
+  nmask <- medianFilter(nmask, size = 1)
+  nmask <- bwlabel(nmask)
+  v1 <- propagate(seeds = nmask, x = nmask, lambda = 100000)
+  v1[img1f1.gy == 0] <- 1
+  v1.col <- colorLabels(v1)
+  img1.seg <- paintObjects(v1, img1f1.gy, col = "black")
+
+  ## Immune cell coordinates
+  ydim <- attributes(nmask)$dim[2] # Image dimension y-axis
+  xdim <- attributes(nmask)$dim[1] # Image dimension x-axis
+  plot(c(0, xdim), c(0, ydim), type = "n")
+  rasterImage(nmask, 0, 0, xdim, ydim)
+  threshold <- 0.5
+  binary_img <- nmask > threshold
+  white_coordinates <- which(binary_img, arr.ind = TRUE)
+  white_coordinates[, 2] <- desc(white_coordinates[, 2]) + ydim
+  white_coordinates <- as.data.frame(white_coordinates)
+  white_coordinates$image <- i
+  coords_det <- rbind(coords_det, white_coordinates)
+
+  # Matrix of features for tesselations/calculations
+  tess_shape_inv <- computeFeatures.shape(v1, properies = TRUE)
+  tess_moments_inv <- computeFeatures.moment(v1, properies = TRUE)
+  tess_features <- as.data.frame(cbind(tess_shape_inv, tess_moments_inv))
+  tess_features <- tess_features |> filter(log(s.radius.sd) < 4.5)
+  tess_sizes <- tess_features[, 1]
+  gran_spots <- tess_sizes[tess_sizes > 750]
+
+  # Tesselation locations
+  tess_features$image <- i
+  tess_features$m.cy <- desc(tess_features$m.cy) + ydim
+  gran_coords_det <- rbind(gran_coords_det, tess_features |> select(s.area, m.cx, m.cy, image))
+
+  # Tesselation shape matrix
+  shape_vec <- rbind(
+    mean(tess_features[, 1]),
+    mean(tess_features[, 2]),
+    mean(tess_features[, 3]),
+    mean(tess_features[, 4]),
+    mean(tess_features[, 5]),
+    mean(tess_features[, 6]),
+    quantile(tess_features[, 1], .9),
+    quantile(tess_features[, 2], .9),
+    quantile(tess_features[, 3], .9),
+    quantile(tess_features[, 4], .9),
+    quantile(tess_features[, 5], .9),
+    quantile(tess_features[, 6], .9),
+    quantile(tess_features[, 1], .5),
+    quantile(tess_features[, 1], .95),
+    quantile(tess_features[, 1], .99),
+    length(gran_spots),
+    length(gran_spots) / length(tess_sizes),
+    sum(gran_spots) / sum(tess_sizes)
+  )
+
+  shape_det <- bind_rows(shape_det, as.data.frame(t(shape_vec)))
+
+  ## Tesselation moments matrix
+  moment_vec <- rbind(
+    mean(tess_features[, 7]),
+    mean(tess_features[, 8]),
+    mean(tess_features[, 9]),
+    mean(tess_features[, 10]),
+    mean(tess_features[, 11]),
+    quantile(tess_features[, 7], .9),
+    quantile(tess_features[, 8], .9),
+    quantile(tess_features[, 9], .9),
+    quantile(tess_features[, 10], .9),
+    quantile(tess_features[, 11], .9)
+  )
+
+  moment_det <- bind_rows(moment_det, as.data.frame(t(moment_vec)))
+
+  all_sizes_det <- c(all_sizes_det, tess_features[, 1])
+  all_radius_sd_det <- c(all_radius_sd_det, tess_features[, 5])
+  all_major_axis_det <- c(all_major_axis_det, tess_features[, 9])
+  hist(tess_features[, 1], main = "Distribution of tesselation areas (detailed)", breaks = 50)
+}
+
+colnames(coords_det) <- c(
+  "x", "y", "Image_num"
+)
+
+rownames(shape_det) <- c(1:length(imageList))
+
+colnames(shape_det) <- c(
+  "Area mean", "Perimiter mean", "Radius mean mean",
+  "Radius SD mean", "Radius min mean", "Radius max mean",
+  "Area 90th", "Perimiter 90th", "Radius mean 90th",
+  "Radius SD 90th", "Radius min 90th", "Radius max 90th",
+  "Area median", "Area 95th", "Area 99th", "Num Large Tess",
+  "Prop granuloma tesselations", "Prop tesselation area"
+)
+
+rownames(moment_det) <- c(1:length(imageList))
+
+colnames(moment_det) <- c(
+  "X coord mean", "Y coord mean", "Major axis mean",
+  "Eccentricity mean", "Theta mean",
+  "X coord 90th", "Y coord 90th", "Major axis 90th",
+  "Eccentricity 90th", "Theta 90th"
+)
+
+hist(all_sizes_det, breaks = 40)
+# hist(log(all_radius_sd_det), breaks = 40)
+# hist(log(all_major_axis_det), breaks = 40)
+```
+
+
+```{r immune-cell-histograms-simple}
+coords_location_calcs <- coords |>
+  group_by(Image_num) |>
+  summarize(
+    mean_x = mean(x),
+    mean_y = mean(y),
+    median_x = median(x),
+    median_y = median(y)
+  )
+
+ggplot(coords, aes(x = x)) +
+  geom_bar() +
+  facet_wrap(~Image_num) +
+  labs(
+    title = "Distribution of x-coordinates of immune cells, by image (simple)",
+    x = "x-coordinate"
+  )
+
+ggplot(coords, aes(x = y)) +
+  geom_bar() +
+  facet_wrap(~Image_num) +
+  labs(
+    title = "Distribution of y-coordinates of immune cells, by image (simple)",
+    x = "y-coordinate"
+  )
+```
+
+
+```{r immune-cell-histograms-detailed}
+coords_location_calcs_det <- coords_det |>
+  group_by(Image_num) |>
+  summarize(
+    mean_x = mean(x),
+    mean_y = mean(y),
+    median_x = median(x),
+    median_y = median(y)
+  )
+
+ggplot(coords_det, aes(x = x)) +
+  geom_bar() +
+  facet_wrap(~Image_num) +
+  labs(
+    title = "Distribution of x-coordinates of immune cells, by image (detailed)",
+    x = "x-coordinate"
+  )
+
+ggplot(coords_det, aes(x = y)) +
+  geom_bar() +
+  facet_wrap(~Image_num) +
+  labs(
+    title = "Distribution of y-coordinates of immune cells, by image (detailed)",
+    x = "y-coordinate"
+  )
+```
+
+
+```{r individual-images}
+imageSeg <- function(idx, type = "simple") {
+  img1 <- readImage(imageList[idx])
+  ## pad image out to x and y dimensions that are a  mult of ten
+  ## so can apply same scaling when using clahe()
+  old.dim <- dim(img1)
+  new.dim <- c(10 * ceiling(dim(img1) / 10)[1:2], 4)
+  temp <- array(0.0, new.dim)
+  temp <- as.Image(temp)
+  temp[1:old.dim[1], 1:old.dim[2], 1:old.dim[3]] <- img1
+  img1 <- temp
+  ## greyscale version:
+  img1.gy <- img1
+  colorMode(img1.gy) <- Grayscale
+  img1f1.gy <- getFrame(img1.gy, 1)
+  if (type == "simple") {
+    nmask <- thresh(img1f1.gy, w = 5, h = 5, offset = 0.01)
+    nmask <- opening(nmask, makeBrush(5, shape = "disc"))
+    nmask <- fillHull(nmask)
+    nmask <- bwlabel(nmask)
+    ## Voronoi tesselation:
+    v1 <- propagate(seeds = nmask, x = nmask, lambda = 10000)
+    v1[img1f1.gy == 0] <- 0
+    v1.col <- colorLabels(v1)
+    img1.seg <- paintObjects(v1, img1f1.gy, col = "black")
+  }
+  if (type == "detailed") {
+    ## sharpen image:
+    img1.gy <- clahe(img1.gy, nx = 5, ny = 5, limit = 2)
+    img1.sh <- clahe(img1.gy, nx = 10, ny = 10, limit = 2)
+    nmask <- (getFrame(img1.sh, 1) < otsu(getFrame(img1.sh, 1)))
+    nmask <- fillHull(nmask)
+    nmask <- medianFilter(nmask, size = 1)
+    nmask <- bwlabel(nmask)
+    v1 <- propagate(seeds = nmask, x = nmask, lambda = 100000)
+    v1[img1f1.gy == 0] <- 1
+    v1.col <- colorLabels(v1)
+    img1.seg <- paintObjects(v1, img1f1.gy, col = "black")
+  }
+  ## Figure:
+  par(mfrow = c(2, 2))
+  display(img1, method = "raster")
+  display(nmask, all = TRUE, method = "raster")
+  display(v1.col, method = "raster")
+  display(img1.seg, method = "raster")
+  ## Data:
+  out <- list(
+    image = img1,
+    image.gy = img1f1.gy,
+    mask = nmask,
+    vtess = v1
+  )
+  return(out)
+}
+
+imageSeg(2, "simple")
+```
+
+
+```{r quantile-functions}
+# expit <- function(x) {
+#   exp(x) / (1 + exp(x))
+# }
+#
+# ## get and format quantile data as a vector:
+# get.stats <- function(x, p = seq(-5, 5, by = 1), feature = "v") {
+#   ## set feature = "v" if stats summarize a voronoi tesselation
+#   ## set feature = "c" if stats summarize cell locations (mask)
+#   stats <- apply(x, MAR = 2, FUN = quantile, probs = expit(p), na.rm = TRUE)
+#   stats.names <- outer(paste0("q", 1:length(p)), paste0(feature, ".", colnames(stats)), FUN = paste, sep = ".")
+#   stats <- as.vector(stats)
+#   names(stats) <- as.vector(stats.names)
+#   return(stats)
+# }
+#
+# get.features <- function(i) {
+#   ## Rotation Invariant Cell Moment Metrics
+#   f.moment1 <- computeFeatures.moment(detailedSeg[[i]]$mask,
+#     ref = detailedSeg[[i]]$image.gy,
+#     properties = FALSE
+#   )
+#   keep <- computeFeatures.moment(properties = TRUE)$rotation.invariant
+#   f.moment1 <- f.moment1[, keep]
+#   s.moment1 <- get.stats(f.moment1, feature = "c")
+#   ## plot(f.moment1[,1],f.moment1[,2]) ## cell locations
+#   ## Rotation Invariant Basic Cell Location Metrics
+#   f.basic1 <- computeFeatures.basic(detailedSeg[[i]]$mask,
+#     ref = detailedSeg[[i]]$image.gy,
+#     properties = FALSE
+#   )
+#   keep <- computeFeatures.basic(properties = TRUE)$rotation.invariant
+#   f.basic1 <- f.basic1[, keep]
+#   s.basic1 <- get.stats(f.basic1, feature = "c")
+#   ## Rotation Invariant Haralick Features
+#   f.hara1 <- computeFeatures.haralick(detailedSeg[[i]]$mask,
+#     ref = detailedSeg[[i]]$image.gy,
+#     properties = FALSE
+#   )
+#   keep <- computeFeatures.haralick(properties = TRUE)$rotation.invariant
+#   f.hara1 <- f.hara1[, keep]
+#   s.hara1 <- get.stats(f.hara1, feature = "c")
+#   ## Rotation Invariant Tessalation Moment Features
+#   f.v.moment1 <- computeFeatures.moment(detailedSeg[[i]]$vtess,
+#     ref = detailedSeg[[i]]$image.gy,
+#     properties = FALSE
+#   )
+#   keep <- computeFeatures.moment(properties = TRUE)$rotation.invariant
+#   f.v.moment1 <- f.v.moment1[, keep]
+#   s.v.moment1 <- get.stats(f.v.moment1, feature = "v")
+#   ## Rotation Invariant Tessalation Shape Features:
+#   f.v.shape1 <- computeFeatures.shape(detailedSeg[[i]]$vtess, properties = FALSE)
+#   keep <- computeFeatures.shape(properties = TRUE)$rotation.invariant
+#   f.v.shape1 <- f.v.shape1[, keep]
+#   s.v.shape1 <- get.stats(f.v.shape1, feature = "v")
+#   out <- c(s.moment1, s.basic1, s.hara1, s.v.moment1, s.v.shape1)
+#   return(out)
+# }
+```
+
+
+```{r merge-datasets}
+simple_data <- as.data.frame(c(immune_matrix, shape, moment))
+detailed_data <- as.data.frame(c(immune_matrix, shape_det, moment_det))
+```
+
+
+```{r heatmaps, fig.height = 5}
+heatmap.2(as.matrix(immune_matrix), main = "Immune cell heatmap", scale = "column", cexCol = 0.6)
+heatmap.2(as.matrix(shape), main = "Tesselation shape heatmap", scale = "column", cexCol = 0.6)
+heatmap.2(as.matrix(moment), main = "Tesselation moment heatmap", scale = "column", cexCol = 0.6)
+heatmap.2(as.matrix(shape_det), main = "Detailed tesselation shape heatmap", scale = "column", cexCol = 0.6)
+heatmap.2(as.matrix(moment_det), main = "Detailed tesselation moment heatmap", scale = "column", cexCol = 0.6)
+
+heatmap.2(as.matrix(simple_data), main = "All data heatmap (simple)", scale = "column", cexCol = 0.6)
+heatmap.2(as.matrix(detailed_data), main = "All data heatmap (detailed)", scale = "column", cexCol = 0.6)
+```
+
+
+```{r granuloma-elbow-method}
+large_tile_locations <- gran_coords |>
+  filter(s.area > 1000)
+image_groups <- split(large_tile_locations, large_tile_locations$image)
+fviz_nbclust(as.data.frame(image_groups[1]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups[2]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups[3]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups[4]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups[5]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups[6]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups[7]), kmeans, method = "wss")
+# fviz_nbclust(as.data.frame(image_groups[8]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups[9]), kmeans, method = "wss")
+# fviz_nbclust(as.data.frame(image_groups[10]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups[11]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups[12]), kmeans, method = "wss")
+```
+
+
+```{r granuloma-elbow-method-detailed}
+large_tile_locations_det <- gran_coords_det |>
+  filter(s.area > 750)
+image_groups_det <- split(large_tile_locations_det, large_tile_locations_det$image)
+fviz_nbclust(as.data.frame(image_groups_det[1]), kmeans, method = "wss")
+# fviz_nbclust(as.data.frame(image_groups_det[2]), kmeans, method = "wss")
+# fviz_nbclust(as.data.frame(image_groups_det[3]), kmeans, method = "wss")
+# fviz_nbclust(as.data.frame(image_groups_det[4]), kmeans, method = "wss")
+# fviz_nbclust(as.data.frame(image_groups_det[5]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups_det[6]), kmeans, method = "wss")
+# fviz_nbclust(as.data.frame(image_groups_det[7]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups_det[8]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups_det[9]), kmeans, method = "wss")
+# fviz_nbclust(as.data.frame(image_groups_det[10]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups_det[11]), kmeans, method = "wss")
+fviz_nbclust(as.data.frame(image_groups_det[12]), kmeans, method = "wss")
+```
+
+
+```{r other-clustering}
+NbClust(as.data.frame(image_groups[1])[-c(1, 4)], min.nc = 2, max.nc = 15, method = "kmeans")$Best.nc
+NbClust(as.data.frame(image_groups[2])[-c(1, 4)], min.nc = 2, max.nc = 15, method = "kmeans")$Best.nc
+NbClust(as.data.frame(image_groups[3])[-c(1, 4)], min.nc = 2, max.nc = 5, method = "kmeans")$Best.nc
+NbClust(as.data.frame(image_groups[4])[-c(1, 4)], min.nc = 2, max.nc = 15, method = "kmeans")$Best.nc
+NbClust(as.data.frame(image_groups[5])[-c(1, 4)], min.nc = 2, max.nc = 15, method = "kmeans")$Best.nc
+NbClust(as.data.frame(image_groups[6])[-c(1, 4)], min.nc = 2, max.nc = 15, method = "kmeans")$Best.nc
+NbClust(as.data.frame(image_groups[7])[-c(1, 4)], min.nc = 2, max.nc = 5, method = "kmeans")$Best.nc
+NbClust(as.data.frame(image_groups[8])[-c(1, 4)], min.nc = 2, max.nc = 5, method = "kmeans")$Best.nc
+NbClust(as.data.frame(image_groups[9])[-c(1, 4)], min.nc = 2, max.nc = 15, method = "kmeans")$Best.nc
+# NbClust(as.data.frame(image_groups[10])[-c(1, 4)], min.nc=2, max.nc=7, method="kmeans")$Best.nc
+NbClust(as.data.frame(image_groups[11])[-c(1, 4)], min.nc = 2, max.nc = 15, method = "kmeans")$Best.nc
+NbClust(as.data.frame(image_groups[12])[-c(1, 4)], min.nc = 2, max.nc = 15, method = "kmeans")$Best.nc
+```
+
+
+```{r gap-stats-simple}
+gap_stat_1 <- clusGap(as.data.frame(image_groups[1])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_1)
+
+gap_stat_2 <- clusGap(as.data.frame(image_groups[2])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_2)
+
+gap_stat_4 <- clusGap(as.data.frame(image_groups[4])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_4)
+
+gap_stat_5 <- clusGap(as.data.frame(image_groups[5])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_5)
+
+gap_stat_6 <- clusGap(as.data.frame(image_groups[6])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_6)
+
+gap_stat_9 <- clusGap(as.data.frame(image_groups[9])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_9)
+
+gap_stat_11 <- clusGap(as.data.frame(image_groups[11])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_11)
+
+gap_stat_12 <- clusGap(as.data.frame(image_groups[12])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_12)
+```
+
+
+```{r gap-stats-detailed}
+gap_stat_det_1 <- clusGap(as.data.frame(image_groups_det[1])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_det_1)
+
+gap_stat_det_8 <- clusGap(as.data.frame(image_groups_det[8])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_det_8)
+
+gap_stat_det_9 <- clusGap(as.data.frame(image_groups_det[9])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_det_9)
+
+gap_stat_det_11 <- clusGap(as.data.frame(image_groups_det[11])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_det_11)
+
+gap_stat_det_12 <- clusGap(as.data.frame(image_groups_det[12])[-c(1, 4)], FUNcluster = kmeans, K.max = 15)
+fviz_gap_stat(gap_stat_det_12)
+```
+
+
+```{r mclust-density-estimates}
+clust1 <- densityMclust(as.data.frame(image_groups[1])[-c(1, 4)])
+clust1
+plot(clust1, what = "density", type = "persp")
+
+clust2 <- densityMclust(as.data.frame(image_groups[2])[-c(1, 4)])
+clust2
+plot(clust2, what = "density", type = "persp")
+
+clust3 <- densityMclust(as.data.frame(image_groups[3])[-c(1, 4)])
+clust3
+plot(clust3, what = "density", type = "persp")
+
+clust4 <- densityMclust(as.data.frame(image_groups[4])[-c(1, 4)])
+clust4
+plot(clust4, what = "density", type = "persp")
+
+clust5 <- densityMclust(as.data.frame(image_groups[5])[-c(1, 4)])
+clust5
+plot(clust5, what = "density", type = "persp")
+
+clust6 <- densityMclust(as.data.frame(image_groups[6])[-c(1, 4)])
+clust6
+plot(clust6, what = "density", type = "persp")
+
+clust7 <- densityMclust(as.data.frame(image_groups[7])[-c(1, 4)])
+clust7
+plot(clust7, what = "density", type = "persp")
+
+clust8 <- densityMclust(as.data.frame(image_groups[8])[-c(1, 4)])
+clust8
+plot(clust8, what = "density", type = "persp")
+
+clust9 <- densityMclust(as.data.frame(image_groups[9])[-c(1, 4)])
+clust9
+plot(clust9, what = "density", type = "persp")
+
+clust10 <- densityMclust(as.data.frame(image_groups[10])[-c(1, 4)])
+clust10
+plot(clust10, what = "density", type = "persp")
+
+clust11 <- densityMclust(as.data.frame(image_groups[11])[-c(1, 4)])
+clust11
+plot(clust11, what = "density", type = "persp")
+
+clust12 <- densityMclust(as.data.frame(image_groups[12])[-c(1, 4)])
+clust12
+plot(clust12, what = "density", type = "persp")
+```
+
+
+```{r more-mclust}
+plot(clust1, what = "density", type = "hdr", data = as.data.frame(image_groups[1])[-c(1, 4)], points.cex = 0.5)
+plot(clust2, what = "density", type = "hdr", data = as.data.frame(image_groups[2])[-c(1, 4)], points.cex = 0.5)
+# plot(clust3, what = "density", type = "hdr", data = as.data.frame(image_groups[3])[-c(1, 4)], points.cex = 0.5)
+plot(clust4, what = "density", type = "hdr", data = as.data.frame(image_groups[4])[-c(1, 4)], points.cex = 0.5)
+plot(clust5, what = "density", type = "hdr", data = as.data.frame(image_groups[5])[-c(1, 4)], points.cex = 0.5)
+plot(clust6, what = "density", type = "hdr", data = as.data.frame(image_groups[6])[-c(1, 4)], points.cex = 0.5)
+plot(clust7, what = "density", type = "hdr", data = as.data.frame(image_groups[7])[-c(1, 4)], points.cex = 0.5)
+# plot(clust8, what = "density", type = "hdr", data = as.data.frame(image_groups[8])[-c(1, 4)], points.cex = 0.5)
+plot(clust9, what = "density", type = "hdr", data = as.data.frame(image_groups[9])[-c(1, 4)], points.cex = 0.5)
+# plot(clust10, what = "density", type = "hdr", data = as.data.frame(image_groups[10])[-c(1, 4)], points.cex = 0.5)
+plot(clust11, what = "density", type = "hdr", data = as.data.frame(image_groups[11])[-c(1, 4)], points.cex = 0.5)
+plot(clust12, what = "density", type = "hdr", data = as.data.frame(image_groups[12])[-c(1, 4)], points.cex = 0.5)
+```
+
+
+```{r cluster-dend}
+simple_hclust <- dist(as.matrix(simple_data)) # find distance matrix
+plot(hclust(simple_hclust))
+```
+
+
+```{r page-nums}
+page_nums <- c(1, 8, 11, 12, 2, 3, 4, 7, 5, 6, 10, 9)
+
+simple_data$page_nums <- page_nums
+detailed_data$page_nums <- page_nums
+```

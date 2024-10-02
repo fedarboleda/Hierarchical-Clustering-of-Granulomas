@@ -1,0 +1,294 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% granuloma image analysis        %%
+%%           knitr doc             %%
+%% Last Modified  02/02/24 by ESI. %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\documentclass{article}\usepackage[]{graphicx}\usepackage[]{xcolor}
+% maxwidth is the original width if it is less than linewidth
+% otherwise use linewidth (to make sure the graphics do not exceed the margin)
+\makeatletter
+\def\maxwidth{ %
+  \ifdim\Gin@nat@width>\linewidth
+    \linewidth
+  \else
+    \Gin@nat@width
+  \fi
+}
+\makeatother
+
+\definecolor{fgcolor}{rgb}{0.345, 0.345, 0.345}
+\newcommand{\hlnum}[1]{\textcolor[rgb]{0.686,0.059,0.569}{#1}}%
+\newcommand{\hlstr}[1]{\textcolor[rgb]{0.192,0.494,0.8}{#1}}%
+\newcommand{\hlcom}[1]{\textcolor[rgb]{0.678,0.584,0.686}{\textit{#1}}}%
+\newcommand{\hlopt}[1]{\textcolor[rgb]{0,0,0}{#1}}%
+\newcommand{\hlstd}[1]{\textcolor[rgb]{0.345,0.345,0.345}{#1}}%
+\newcommand{\hlkwa}[1]{\textcolor[rgb]{0.161,0.373,0.58}{\textbf{#1}}}%
+\newcommand{\hlkwb}[1]{\textcolor[rgb]{0.69,0.353,0.396}{#1}}%
+\newcommand{\hlkwc}[1]{\textcolor[rgb]{0.333,0.667,0.333}{#1}}%
+\newcommand{\hlkwd}[1]{\textcolor[rgb]{0.737,0.353,0.396}{\textbf{#1}}}%
+\let\hlipl\hlkwb
+
+\usepackage{framed}
+\makeatletter
+\newenvironment{kframe}{%
+ \def\at@end@of@kframe{}%
+ \ifinner\ifhmode%
+  \def\at@end@of@kframe{\end{minipage}}%
+  \begin{minipage}{\columnwidth}%
+ \fi\fi%
+ \def\FrameCommand##1{\hskip\@totalleftmargin \hskip-\fboxsep
+ \colorbox{shadecolor}{##1}\hskip-\fboxsep
+     % There is no \\@totalrightmargin, so:
+     \hskip-\linewidth \hskip-\@totalleftmargin \hskip\columnwidth}%
+ \MakeFramed {\advance\hsize-\width
+   \@totalleftmargin\z@ \linewidth\hsize
+   \@setminipage}}%
+ {\par\unskip\endMakeFramed%
+ \at@end@of@kframe}
+\makeatother
+
+\definecolor{shadecolor}{rgb}{.97, .97, .97}
+\definecolor{messagecolor}{rgb}{0, 0, 0}
+\definecolor{warningcolor}{rgb}{1, 0, 1}
+\definecolor{errorcolor}{rgb}{1, 0, 0}
+\newenvironment{knitrout}{}{} % an empty environment to be redefined in TeX
+
+\usepackage{alltt}
+\usepackage{graphicx}
+\usepackage{fullpage}
+\usepackage{setspace}
+\usepackage{comment} 
+\usepackage{rotating}
+\usepackage{color}
+\usepackage{array}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{bm}
+\newcommand{\rinline}[1]{Error w/ Knitr}
+\definecolor{red}{rgb}{1.0000000,0.0000000,0.0000000}
+\definecolor{orange}{rgb}{1.0000000,0.6470588,0.0000000}
+\definecolor{green}{rgb}{0.0000000,1.0000000,0.0000000}
+\definecolor{darkgreen}{rgb}{0.0000000,0.3921569,0.0000000}
+\definecolor{lightblue}{rgb}{0.6784314,0.8470588,0.9019608}
+\definecolor{blue}{rgb}{0.0000000,0.0000000,1.0000000}
+\definecolor{navy}{rgb}{0.0000000,0.0000000,0.5000000}
+\definecolor{purple}{rgb}{0.6274510,0.1254902,0.9411765}
+\definecolor{maroon}{rgb}{0.6901961,0.1882353,0.3764706}
+ 
+\title{Granuloma Image Analysis Investigation}
+\author{Federico Arboleda}
+\date{\today}
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\begin{document}
+\maketitle
+
+\section{Input Data}
+
+\begin{knitrout}
+\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
+\begin{alltt}
+\hlkwd{rm}\hlstd{(}\hlkwc{list}\hlstd{=}\hlkwd{ls}\hlstd{())}
+\hlstd{opts_chunk}\hlopt{$}\hlkwd{set}\hlstd{(}\hlkwc{fig.path}\hlstd{=}\hlstr{'./figs/'}\hlstd{,}\hlkwc{cache.path}\hlstd{=}\hlstr{'./cache/'}\hlstd{)}
+\hlkwd{library}\hlstd{(mgcv)}
+\hlkwd{library}\hlstd{(EBImage)}
+\hlkwd{source}\hlstd{(}\hlstr{"RFuncts.R"}\hlstd{)}
+\end{alltt}
+\end{kframe}
+\end{knitrout}
+
+
+\begin{knitrout}
+\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
+\begin{alltt}
+\hlstd{imageList}\hlkwb{<-}\hlkwd{system}\hlstd{(}\hlstr{"ls *.png"}\hlstd{,}\hlkwc{intern}\hlstd{=}\hlnum{TRUE}\hlstd{)}
+\hlstd{img1}\hlkwb{<-}\hlkwd{readImage}\hlstd{(}\hlstr{"image001.png"}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\color{warningcolor}{\#\# Warning in .loadFun(files, ...): cannot open the connection}}
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in transpose(y): object is NULL}}\begin{alltt}
+\hlkwd{par}\hlstd{(}\hlkwc{mfrow}\hlstd{=}\hlkwd{c}\hlstd{(}\hlnum{2}\hlstd{,}\hlnum{2}\hlstd{))}
+\hlkwd{display}\hlstd{(img1,}\hlkwc{method}\hlstd{=}\hlstr{"raster"}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in validImageObject(x): object 'img1' not found}}\begin{alltt}
+\hlkwd{display}\hlstd{(}\hlkwd{getFrame}\hlstd{(img1,}\hlnum{1}\hlstd{),}\hlkwc{method}\hlstd{=}\hlstr{"raster"}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in numberOfFrames(y, type): object 'img1' not found}}\begin{alltt}
+\hlkwd{display}\hlstd{(}\hlkwd{getFrame}\hlstd{(img1,}\hlnum{2}\hlstd{),}\hlkwc{method}\hlstd{=}\hlstr{"raster"}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in numberOfFrames(y, type): object 'img1' not found}}\begin{alltt}
+\hlkwd{display}\hlstd{(}\hlkwd{getFrame}\hlstd{(img1,}\hlnum{3}\hlstd{),}\hlkwc{method}\hlstd{=}\hlstr{"raster"}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in numberOfFrames(y, type): object 'img1' not found}}\end{kframe}
+\end{knitrout}
+
+
+\section{Image Segmentation Data and Plots}
+
+\begin{knitrout}
+\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
+\begin{alltt}
+\hlkwd{pdf}\hlstd{(}\hlkwc{file}\hlstd{=}\hlstr{"voronoiSegs.simple.pdf"}\hlstd{,}\hlkwc{height}\hlstd{=}\hlnum{10}\hlstd{,}\hlkwc{width}\hlstd{=}\hlnum{6.5}\hlstd{)}
+\hlstd{simpleSeg}\hlkwb{<-}\hlkwd{sapply}\hlstd{(}\hlkwc{FUN}\hlstd{=imageSeg,}\hlnum{1}\hlopt{:}\hlkwd{length}\hlstd{(imageList),}\hlkwc{type}\hlstd{=}\hlstr{"simple"}\hlstd{,}\hlkwc{simplify}\hlstd{=}\hlnum{FALSE}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in match.fun(FUN): object 'imageSeg' not found}}\begin{alltt}
+\hlkwd{dev.off}\hlstd{()}
+\end{alltt}
+\begin{verbatim}
+## pdf 
+##   2
+\end{verbatim}
+\begin{alltt}
+\hlkwd{pdf}\hlstd{(}\hlkwc{file}\hlstd{=}\hlstr{"voronoiSegs.detailed.pdf"}\hlstd{,}\hlkwc{height}\hlstd{=}\hlnum{10}\hlstd{,}\hlkwc{width}\hlstd{=}\hlnum{6.5}\hlstd{)}
+\hlstd{detailedSeg}\hlkwb{<-}\hlkwd{sapply}\hlstd{(}\hlkwc{FUN}\hlstd{=imageSeg,}\hlnum{1}\hlopt{:}\hlkwd{length}\hlstd{(imageList),}\hlkwc{type}\hlstd{=}\hlstr{"detailed"}\hlstd{,}\hlkwc{simplify}\hlstd{=}\hlnum{FALSE}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in match.fun(FUN): object 'imageSeg' not found}}\begin{alltt}
+\hlkwd{dev.off}\hlstd{()}
+\end{alltt}
+\begin{verbatim}
+## pdf 
+##   2
+\end{verbatim}
+\end{kframe}
+\end{knitrout}
+
+\section{Numeric Summaries}
+
+\begin{knitrout}
+\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
+\begin{alltt}
+\hlkwd{length}\hlstd{(detailedSeg)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in eval(expr, envir, enclos): object 'detailedSeg' not found}}\begin{alltt}
+\hlkwd{names}\hlstd{(detailedSeg)}\hlkwb{<-}\hlstd{imageList}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in names(detailedSeg) <- imageList: object 'detailedSeg' not found}}\begin{alltt}
+\hlkwd{names}\hlstd{(detailedSeg[[}\hlnum{1}\hlstd{]])}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in eval(expr, envir, enclos): object 'detailedSeg' not found}}\begin{alltt}
+\hlcom{## Rotation Invariant Cell Moment Metrics}
+\hlstd{f.moment1}\hlkwb{<-}\hlkwd{computeFeatures.moment}\hlstd{(detailedSeg[[}\hlnum{1}\hlstd{]]}\hlopt{$}\hlstd{mask,}
+                                  \hlkwc{ref}\hlstd{=detailedSeg[[}\hlnum{1}\hlstd{]]}\hlopt{$}\hlstd{image.gy,}
+                                  \hlkwc{properties}\hlstd{=}\hlnum{FALSE}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in checkx(x): object 'detailedSeg' not found}}\begin{alltt}
+\hlstd{keep}\hlkwb{<-}\hlkwd{computeFeatures.moment}\hlstd{(}\hlkwc{properties}\hlstd{=}\hlnum{TRUE}\hlstd{)}\hlopt{$}\hlstd{rotation.invariant}
+\hlstd{f.moment1}\hlkwb{<-}\hlstd{f.moment1[,keep]}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in eval(expr, envir, enclos): object 'f.moment1' not found}}\begin{alltt}
+\hlkwd{plot}\hlstd{(f.moment1[,}\hlnum{1}\hlstd{],f.moment1[,}\hlnum{2}\hlstd{])} \hlcom{## cell locations}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in plot(f.moment1[, 1], f.moment1[, 2]): object 'f.moment1' not found}}\begin{alltt}
+\hlcom{## Rotation Invariant Basic Cell Location Metrics}
+\hlstd{f.basic1}\hlkwb{<-}\hlkwd{computeFeatures.basic}\hlstd{(detailedSeg[[}\hlnum{1}\hlstd{]]}\hlopt{$}\hlstd{mask,}
+                                \hlkwc{ref}\hlstd{=detailedSeg[[}\hlnum{1}\hlstd{]]}\hlopt{$}\hlstd{image.gy,}
+                                \hlkwc{properties}\hlstd{=}\hlnum{FALSE}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in checkx(x): object 'detailedSeg' not found}}\begin{alltt}
+\hlstd{keep}\hlkwb{<-}\hlkwd{computeFeatures.basic}\hlstd{(}\hlkwc{properties}\hlstd{=}\hlnum{TRUE}\hlstd{)}\hlopt{$}\hlstd{rotation.invariant}
+\hlstd{f.basic1}\hlkwb{<-}\hlstd{f.basic1[,keep]}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in eval(expr, envir, enclos): object 'f.basic1' not found}}\begin{alltt}
+\hlcom{## Rotation Invariant Haralick Features}
+\hlstd{f.hara1}\hlkwb{<-}\hlkwd{computeFeatures.haralick}\hlstd{(detailedSeg[[}\hlnum{1}\hlstd{]]}\hlopt{$}\hlstd{mask,}
+                                  \hlkwc{ref}\hlstd{=detailedSeg[[}\hlnum{1}\hlstd{]]}\hlopt{$}\hlstd{image.gy,}
+                                  \hlkwc{properties}\hlstd{=}\hlnum{FALSE}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in checkx(x): object 'detailedSeg' not found}}\begin{alltt}
+\hlstd{keep}\hlkwb{<-}\hlkwd{computeFeatures.haralick}\hlstd{(}\hlkwc{properties}\hlstd{=}\hlnum{TRUE}\hlstd{)}\hlopt{$}\hlstd{rotation.invariant}
+\hlstd{f.hara1}\hlkwb{<-}\hlstd{f.hara1[,keep]}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in eval(expr, envir, enclos): object 'f.hara1' not found}}\begin{alltt}
+\hlcom{## Rotation Invariant Tessalation Moment Features}
+\hlstd{f.v.moment1}\hlkwb{<-}\hlkwd{computeFeatures.moment}\hlstd{(detailedSeg[[}\hlnum{1}\hlstd{]]}\hlopt{$}\hlstd{vtess,}
+                                    \hlkwc{ref}\hlstd{=detailedSeg[[}\hlnum{1}\hlstd{]]}\hlopt{$}\hlstd{image.gy,}
+                                    \hlkwc{properties}\hlstd{=}\hlnum{FALSE}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in checkx(x): object 'detailedSeg' not found}}\begin{alltt}
+\hlstd{keep}\hlkwb{<-}\hlkwd{computeFeatures.moment}\hlstd{(}\hlkwc{properties}\hlstd{=}\hlnum{TRUE}\hlstd{)}\hlopt{$}\hlstd{rotation.invariant}
+\hlstd{f.v.moment1}\hlkwb{<-}\hlstd{f.v.moment1[,keep]}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in eval(expr, envir, enclos): object 'f.v.moment1' not found}}\begin{alltt}
+\hlcom{## Rotation Invariant Tessalation Shape Features:}
+\hlstd{f.v.shape1}\hlkwb{<-}\hlkwd{computeFeatures.shape}\hlstd{(detailedSeg[[}\hlnum{1}\hlstd{]]}\hlopt{$}\hlstd{vtess,}\hlkwc{properties}\hlstd{=}\hlnum{FALSE}\hlstd{)}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in checkx(x): object 'detailedSeg' not found}}\begin{alltt}
+\hlstd{keep}\hlkwb{<-}\hlkwd{computeFeatures.shape}\hlstd{(}\hlkwc{properties}\hlstd{=}\hlnum{TRUE}\hlstd{)}\hlopt{$}\hlstd{rotation.invariant}
+\hlstd{f.v.shape1}\hlkwb{<-}\hlstd{f.v.shape1[,keep]}
+\end{alltt}
+
+
+{\ttfamily\noindent\bfseries\color{errorcolor}{\#\# Error in eval(expr, envir, enclos): object 'f.v.shape1' not found}}\end{kframe}
+\end{knitrout}
+
+\newpage
+\section{ }
+
+
+
+
+\section{Wrap Up}
+
+\begin{knitrout}
+\definecolor{shadecolor}{rgb}{0.969, 0.969, 0.969}\color{fgcolor}\begin{kframe}
+\begin{alltt}
+\hlkwd{gc}\hlstd{();} \hlkwd{save.image}\hlstd{()} \hlcom{## Do garbage collection and save workspace.}
+\end{alltt}
+\begin{verbatim}
+##           used  (Mb) gc trigger  (Mb) limit (Mb) max used  (Mb)
+## Ncells 2440821 130.4    4558878 243.5         NA  4558878 243.5
+## Vcells 4819308  36.8   18728330 142.9      16384 25055051 191.2
+\end{verbatim}
+\end{kframe}
+\end{knitrout}
+
+\end{document}
+
+
+\begin{figure}[!hb]
+\begin{center}
+% trim = left bottom right top
+\includegraphics[width=6.5in,page=2, trim=1.0in 5.50in 1.0in 0.95in,
+  clip]{Tables13Oct21.pdf}
+\end{center}
+\end{figure}
+
