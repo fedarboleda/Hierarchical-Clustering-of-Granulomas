@@ -1,0 +1,677 @@
+
+```{r load-packages}
+library(EBImage)
+library(tidyverse)
+library(knitr)
+library(gplots)
+library(cluster)
+library(NbClust)
+library(factoextra)
+library(mclust)
+library(uwot)
+library(fastICA)
+library(clustvarsel)
+library(vscc)
+imageList <- system("ls images/*.png", intern = TRUE)
+```
+
+
+```{r functions-updated}
+expit <- function(x) {
+  exp(x) / (1 + exp(x))
+}
+logit <- function(p) {
+  (log(p) - log(1 - p))
+}
+
+## get and format quantile data as a vector:
+get.stats <- function(x, p = c(0.25, 0.5, 0.75), feature = "v", difference = TRUE) {
+  ## set feature = "v" if stats summarize a voronoi tesselation
+  ## set feature = "c" if stats summarize cell locations (mask)
+  stats <- apply(x, MAR = 2, FUN = quantile, probs = p, na.rm = TRUE)
+  cnames <- colnames(stats)
+  dstats <- (stats[2:length(p), , drop = FALSE] - stats[1:(length(p) - 1), , drop = FALSE])
+  idx.medn <- floor((length(p) + 1) / 2)
+  dstats <- rbind(stats[idx.medn, ], dstats)
+  ## browser()
+  if (difference == FALSE) {
+    stats <- as.vector(stats)
+    stats.names <- outer(paste0("q", 1:length(p)), paste0(feature, ".", cnames), FUN = paste, sep = ".")
+  }
+  if (difference == TRUE) {
+    stats <- as.vector(dstats)
+    stats.names <- outer(c("m", paste0("d", 2:length(p))), paste0(feature, ".", cnames), FUN = paste, sep = ".")
+  }
+  names(stats) <- as.vector(stats.names)
+  return(stats)
+}
+
+get.lowlevel.features <- function(i, threshold = 10e6) {
+  ## Rotation Invariant Cell Moment Metrics
+  f.moment1 <- computeFeatures.moment(detailedSeg[[i]]$mask,
+    ref = detailedSeg[[i]]$image.gy,
+    properties = FALSE
+  )
+  keep <- computeFeatures.moment(properties = TRUE)$rotation.invariant
+  f.moment1 <- f.moment1[, keep]
+  ## plot(f.moment1[,1],f.moment1[,2]) ## cell locations
+  ## Rotation Invariant Basic Cell Location Metrics
+  f.basic1 <- computeFeatures.basic(detailedSeg[[i]]$mask,
+    ref = detailedSeg[[i]]$image.gy,
+    properties = FALSE
+  )
+  keep <- computeFeatures.basic(properties = TRUE)$rotation.invariant
+  f.basic1 <- f.basic1[, keep]
+  ## Rotation Invariant Haralick Features
+  f.hara1 <- computeFeatures.haralick(detailedSeg[[i]]$mask,
+    ref = detailedSeg[[i]]$image.gy,
+    properties = FALSE
+  )
+  f.v.hara <- computeFeatures.haralick(detailedSeg[[i]]$vtess,
+    ref = detailedSeg[[i]]$image.gy,
+    properties = FALSE
+  )
+  keep <- computeFeatures.haralick(properties = TRUE)$rotation.invariant
+  f.hara1 <- f.hara1[, keep]
+  f.v.hara <- f.v.hara[, keep]
+  ## Rotation Invariant Tessalation Moment Features
+  f.v.moment1 <- computeFeatures.moment(detailedSeg[[i]]$vtess,
+    ref = detailedSeg[[i]]$image.gy,
+    properties = FALSE
+  )
+  keep <- computeFeatures.moment(properties = TRUE)$rotation.invariant
+  f.v.moment1 <- f.v.moment1[, keep]
+  ## Rotation Invariant Tessalation Shape Features:
+  f.v.shape1 <- computeFeatures.shape(detailedSeg[[i]]$vtess, properties = FALSE)
+  keep <- computeFeatures.shape(properties = TRUE)$rotation.invariant
+  f.v.shape1 <- f.v.shape1[, keep]
+  ## browser()
+  subst <- f.v.shape1[, "s.radius.sd"] < threshold
+  colnames(f.moment1) <- paste0("fm.", colnames(f.moment1))
+  colnames(f.basic1) <- paste0("fb.", colnames(f.basic1))
+  colnames(f.hara1) <- paste0("fh.", colnames(f.hara1))
+  colnames(f.v.hara) <- paste0("fvh.", colnames(f.v.hara))
+  colnames(f.v.moment1) <- paste0("fvm.", colnames(f.v.moment1))
+  colnames(f.v.shape1) <- paste0("fvs.", colnames(f.v.shape1))
+  out <- cbind(f.moment1, f.basic1, f.hara1, f.v.hara, f.v.moment1, f.v.shape1)
+  out <- out[subst, ]
+  return(out)
+}
+
+get.features <- function(i, fkeep = f.keep, threshold = 10e6) {
+  ## Rotation Invariant Cell Moment Metrics
+  f.moment1 <- computeFeatures.moment(detailedSeg[[i]]$mask,
+    ref = detailedSeg[[i]]$image.gy,
+    properties = FALSE
+  )
+  keep <- computeFeatures.moment(properties = TRUE)$rotation.invariant
+  f.moment1 <- f.moment1[, keep]
+  ## plot(f.moment1[,1],f.moment1[,2]) ## cell locations
+  ## Rotation Invariant Basic Cell Location Metrics
+  f.basic1 <- computeFeatures.basic(detailedSeg[[i]]$mask,
+    ref = detailedSeg[[i]]$image.gy,
+    properties = FALSE
+  )
+  keep <- computeFeatures.basic(properties = TRUE)$rotation.invariant
+  f.basic1 <- f.basic1[, keep]
+  ## Rotation Invariant Haralick Features
+  f.hara1 <- computeFeatures.haralick(detailedSeg[[i]]$mask,
+    ref = detailedSeg[[i]]$image.gy,
+    properties = FALSE
+  )
+  f.v.hara <- computeFeatures.haralick(detailedSeg[[i]]$vtess,
+    ref = detailedSeg[[i]]$image.gy,
+    properties = FALSE
+  )
+  keep <- computeFeatures.haralick(properties = TRUE)$rotation.invariant
+  f.hara1 <- f.hara1[, keep]
+  f.v.hara <- f.v.hara[, keep]
+  ## Rotation Invariant Tessalation Moment Features
+  f.v.moment1 <- computeFeatures.moment(detailedSeg[[i]]$vtess,
+    ref = detailedSeg[[i]]$image.gy,
+    properties = FALSE
+  )
+  keep <- computeFeatures.moment(properties = TRUE)$rotation.invariant
+  f.v.moment1 <- f.v.moment1[, keep]
+  ## Rotation Invariant Tessalation Shape Features:
+  f.v.shape1 <- computeFeatures.shape(detailedSeg[[i]]$vtess, properties = FALSE)
+  keep <- computeFeatures.shape(properties = TRUE)$rotation.invariant
+  f.v.shape1 <- f.v.shape1[, keep]
+  ## browser()
+  subst <- f.v.shape1[, "s.radius.sd"] < threshold
+  colnames(f.moment1) <- paste0("fm.", colnames(f.moment1))
+  colnames(f.basic1) <- paste0("fb.", colnames(f.basic1))
+  colnames(f.hara1) <- paste0("fh.", colnames(f.hara1))
+  colnames(f.v.hara) <- paste0("fvh.", colnames(f.v.hara))
+  colnames(f.v.moment1) <- paste0("fvm.", colnames(f.v.moment1))
+  colnames(f.v.shape1) <- paste0("fvs.", colnames(f.v.shape1))
+  out <- NULL
+  use <- (colnames(f.moment1) %in% fkeep)
+  if (any(use)) {
+    s.moment1 <- get.stats(f.moment1[subst, use, drop = FALSE], feature = "c")
+    out <- c(out, s.moment1)
+  }
+  use <- (colnames(f.basic1) %in% fkeep)
+  if (any(use)) {
+    s.basic1 <- get.stats(f.basic1[subst, use, drop = FALSE], feature = "c")
+    out <- c(out, s.basic1)
+  }
+  use <- (colnames(f.hara1) %in% fkeep)
+  if (any(use)) {
+    s.hara1 <- get.stats(f.hara1[subst, use, drop = FALSE], feature = "c")
+    out <- c(out, s.hara1)
+  }
+  use <- (colnames(f.v.hara) %in% fkeep)
+  if (any(use)) {
+    s.v.hara <- get.stats(f.v.hara[subst, use, drop = FALSE], feature = "c")
+    out <- c(out, s.v.hara)
+  }
+  use <- (colnames(f.v.moment1) %in% fkeep)
+  if (any(use)) {
+    s.v.moment1 <- get.stats(f.v.moment1[subst, use, drop = FALSE], feature = "v")
+    out <- c(out, s.v.moment1)
+  }
+  use <- (colnames(f.v.shape1) %in% fkeep)
+  if (any(use)) {
+    s.v.shape1 <- get.stats(f.v.shape1[subst, use, drop = FALSE], feature = "v")
+    out <- c(out, s.v.shape1)
+  }
+  ## browser()
+  return(out)
+}
+
+imageSeg <- function(idx, type = "simple") {
+  img1 <- readImage(imageList[idx])
+  ## pad image out to x and y dimensions that are a  mult of ten
+  ## so can apply same scaling when using clahe()
+  old.dim <- dim(img1)
+  new.dim <- c(10 * ceiling(dim(img1) / 10)[1:2], 4)
+  temp <- array(0.0, new.dim)
+  temp <- as.Image(temp)
+  temp[1:old.dim[1], 1:old.dim[2], 1:old.dim[3]] <- img1
+  img1 <- temp
+  ## greyscale version:
+  img1.gy <- img1
+  colorMode(img1.gy) <- Grayscale
+  img1f1.gy <- getFrame(img1.gy, 1)
+  if (type == "simple") {
+    nmask <- thresh(img1f1.gy, w = 5, h = 5, offset = 0.01)
+    nmask <- opening(nmask, makeBrush(5, shape = "disc"))
+    nmask <- fillHull(nmask)
+    nmask <- bwlabel(nmask)
+    ## Voronoi tesselation:
+    v1 <- propagate(seeds = nmask, x = nmask, lambda = 10000)
+    v1[img1f1.gy == 0] <- 0
+    v1.col <- colorLabels(v1)
+    img1.seg <- paintObjects(v1, img1f1.gy, col = "black")
+  }
+  if (type == "detailed") {
+    ## sharpen image:
+    ## img1.gy<-clahe(img1.gy,nx=5,ny=5,limit=2)
+    ## browser()
+    img1.sh <- clahe(img1.gy, nx = 10, ny = 10, limit = 2)
+    if (idx == 97) {
+      nmask <- thresh(img1f1.gy, w = 5, h = 5, offset = 0.01)
+      nmask <- opening(nmask, makeBrush(5, shape = "disc"))
+      nmask <- fillHull(nmask)
+    }
+    if (idx != 97) {
+      nmask <- (getFrame(img1.sh, 1) < otsu(getFrame(img1.sh, 1)))
+      nmask <- fillHull(nmask)
+      nmask <- medianFilter(nmask, size = 1)
+    }
+    nmask <- bwlabel(nmask)
+    v1 <- propagate(seeds = nmask, x = nmask, lambda = 100000)
+    v1[img1f1.gy == 0] <- 1
+    v1.col <- colorLabels(v1)
+    img1.seg <- paintObjects(v1, img1f1.gy, col = "black")
+  }
+  ## Figure:
+  par(mfrow = c(2, 2))
+  display(getFrame(img1, 1), method = "raster")
+  display(nmask, all = TRUE, method = "raster")
+  display(v1.col, method = "raster")
+  display(img1.seg, method = "raster")
+  ## Data:
+  out <- list(
+    image = img1,
+    image.gy = img1f1.gy,
+    mask = nmask,
+    vtess = v1
+  )
+  return(out)
+}
+
+localDensity <- function(R.l = 25, lowcut = 200, hicut = 400) {
+  #####################################################################
+  ## Compute Density Metrics, adjusting spatial windows to tile size.
+  ## For example, using lowcut=200 and highcut=400
+  ##  avg < lowcut = 100.4
+  ##  avg > lowcut = 595.6
+  ##        ratio ~= 6
+  ## Local density of lymphocytes w/ radius R circle around a centroid
+  ## Local density of granuloma w/ radius \sqrt(6)*R
+  ## Look at local density ratios (plots) for spatial clustering
+  ##      and image-level density summaries.
+  #####################################################################
+  x <- data.frame(lowf)
+  x$small <- 1 * (x$fvs.s.area < lowcut)
+  x$large <- 1 * (x$fvs.s.area > hicut)
+  mu.lymph <- mean(x[x[, "fvs.s.area"] < lowcut, "fvs.s.area"])
+  mu.granu <- mean(x[x[, "fvs.s.area"] > hicut, "fvs.s.area"])
+  R.g <- sqrt(mu.granu / mu.lymph) * R.l
+  uImage <- unique(x$image)
+  stat.mat <- matrix(NA, nrow = length(uImage), ncol = 30)
+  colnames(stat.mat) <- c(
+    "avg.nltn", "avg.ndtn", "avg.nn",
+    "avg.pltn", "avg.ngngn", "avg.nlnln",
+    "avg.pgngn", "avg.plnln",
+    "avg.rdLtoGnearG", "avg.rdGtoLnearL",
+    "prop.lymph",
+    "avg.NNdistToSame", "avg.NNdistLtoL", "avg.NNdistGtoG",
+    "avg.NNdistToOthr", "avg.NNdistLtoG", "avg.NNdistGtoL",
+    "sd.nltn", "sd.ndtn", "sd.nn", "sd.ngngn", "sd.nlnln",
+    "sd.rdLtoGnearG", "sd.rdGtoLnearL",
+    "sd.NNdistToSame", "sd.NNdistLtoL", "sd.NNdistGtoG",
+    "sd.NNdistToOthr", "sd.NNdistLtoG", "sd.NNdistGtoL"
+  )
+  for (i in 1:length(uImage)) {
+    x.i <- x[x$image == i, ]
+    ## filter out intermediate points:
+    x.i <- x.i[(x.i$small + x.i$large) > 0, ]
+    ## pairwise Euclidean distances
+    d.x <- (outer(x.i$fvm.m.cx, x.i$fvm.m.cx, FUN = "-")^2)
+    d.y <- (outer(x.i$fvm.m.cy, x.i$fvm.m.cy, FUN = "-")^2)
+    dist <- sqrt(d.x + d.y)
+    dist <- (0.5 * dist + 0.5 * t(dist))
+    ## number of (all) neighbors in lymph neighborhood
+    x.i$nnln <- apply(dist < R.l, 1, sum)
+    ## number of lymph neighbors in lymph neighborhood
+    x.i$lnln <- apply(sweep(dist < R.l, 2, STATS = x.i$small, FUN = "*"), 1, sum)
+    ## number of granu neighbors in lymph neighborhood
+    x.i$gnln <- apply(sweep(dist < R.l, 2, STATS = x.i$large, FUN = "*"), 1, sum)
+    ## number of (all) neighbors in granu neighborhood
+    x.i$nngn <- apply(dist < R.g, 1, sum)
+    ## number of lymph neighbors in granu neighborhood
+    x.i$lngn <- apply(sweep(dist < R.g, 2, STATS = x.i$small, FUN = "*"), 1, sum)
+    ## number of granu neighbors in granu neighborhood
+    x.i$gngn <- apply(sweep(dist < R.g, 2, STATS = x.i$large, FUN = "*"), 1, sum)
+    ## 1) number of like-type neighbors
+    x.i$nltn <- (x.i$lnln * x.i$small + x.i$gngn * x.i$large)
+    stat.mat[i, 1] <- mean(x.i$nltn)
+    ## 18) sd(number of like-type neighbors)
+    stat.mat[i, 18] <- sd(x.i$nltn)
+    ## 2) number of dissimilar-type neighbors
+    x.i$ndtn <- (x.i$gnln * x.i$small + x.i$lngn * x.i$large)
+    stat.mat[i, 2] <- mean(x.i$ndtn)
+    ## 19) sd(number of dissimilar-type neighbors)
+    stat.mat[i, 19] <- sd(x.i$ndtn)
+    ## 3) total number of neighbors in appropriate sized neighborhood
+    x.i$nn <- (x.i$nnln * x.i$small + x.i$nngn * x.i$large)
+    stat.mat[i, 3] <- mean(x.i$nn)
+    ## 20) sd(total number of neighbors in appropriate sized neighborhood)
+    stat.mat[i, 20] <- sd(x.i$nn)
+    ## 4) proportion of like-type neighbors:
+    x.i$pltn <- (x.i$nltn / x.i$nn)
+    stat.mat[i, 4] <- mean(x.i$pltn)
+    ## 5) avg number of granuloma neighbors of a granuloma
+    stat.mat[i, 5] <- mean(x.i$gngn[x.i$large == 1])
+    ## 21) sd number of granuloma neighbors of a granuloma
+    stat.mat[i, 21] <- sd(x.i$gngn[x.i$large == 1])
+    ## 6) avg number of lymphocyte neighbors of a lymphocyte
+    stat.mat[i, 6] <- mean(x.i$lnln[x.i$small == 1])
+    ## 22) sd number of lymphocyte neighbors of a lymphocyte
+    stat.mat[i, 22] <- sd(x.i$lnln[x.i$small == 1])
+    ## 7) proportion granuloma neighbors of a granuloma
+    stat.mat[i, 7] <- mean(x.i$pltn[x.i$large == 1])
+    ## 8) proportion lympocyte neighbors of a lymphocyte
+    stat.mat[i, 8] <- mean(x.i$pltn[x.i$small == 1])
+    ## 9) relative density of lymphocytes to granulomas near a granuloma
+    x.i$rdLtoGnearG <- (x.i$lngn / x.i$gngn) ## neighborhood size is large
+    stat.mat[i, 9] <- mean(x.i$rdLtoGnearG[x.i$large == 1])
+    ## 23) sd relative density of lymphocytes to granulomas near a granuloma
+    stat.mat[i, 23] <- sd(x.i$rdLtoGnearG[x.i$large == 1])
+    ## 10) relative density of granulomas to lymphocytes near a lymphocyte
+    x.i$rdGtoLnearL <- (x.i$gnln / x.i$lnln) ## neighborhood size is small
+    stat.mat[i, 10] <- mean(x.i$rdGtoLnearL[x.i$small == 1])
+    ## 24) sd relative density of granulomas to lymphocytes near a lymphocyte
+    stat.mat[i, 24] <- sd(x.i$rdGtoLnearL[x.i$small == 1])
+    ## 11) relative freq of lymphocytes
+    stat.mat[i, 11] <- mean(x.i$small)
+    diag(dist) <- NA
+    x.i$distToNNlymph <- apply(dist[, x.i$small == 1], 1, min, na.rm = TRUE)
+    x.i$distToNNgranu <- apply(dist[, x.i$large == 1], 1, min, na.rm = TRUE)
+    ## 12:14) avg distance to a nearest neighbor of the same type
+    x.i$NNdistToSame <- (x.i$distToNNlymph * x.i$small + x.i$distToNNgranu * x.i$large)
+    stat.mat[i, 12] <- mean(x.i$NNdistToSame)
+    stat.mat[i, 13] <- mean(x.i$NNdistToSame[x.i$small == 1])
+    stat.mat[i, 14] <- mean(x.i$NNdistToSame[x.i$large == 1])
+    ## 25:27) sd distance to a nearest neighbor of the same type
+    stat.mat[i, 25] <- sd(x.i$NNdistToSame)
+    stat.mat[i, 26] <- sd(x.i$NNdistToSame[x.i$small == 1])
+    stat.mat[i, 27] <- sd(x.i$NNdistToSame[x.i$large == 1])
+    ## 15:17) avg distance to a nearest neighbor of the other type
+    x.i$NNdistToOther <- (x.i$distToNNlymph * x.i$large + x.i$distToNNgranu * x.i$small)
+    stat.mat[i, 15] <- mean(x.i$NNdistToOther)
+    stat.mat[i, 16] <- mean(x.i$NNdistToOther[x.i$small == 1])
+    stat.mat[i, 17] <- mean(x.i$NNdistToOther[x.i$large == 1])
+    ## 28:30) sd distance to a nearest neighbor of the other type
+    stat.mat[i, 28] <- sd(x.i$NNdistToOther)
+    stat.mat[i, 29] <- sd(x.i$NNdistToOther[x.i$small == 1])
+    stat.mat[i, 30] <- sd(x.i$NNdistToOther[x.i$large == 1])
+    ## keep:
+    ## check (1) image totals (and fractions) of both size classes,
+    ## check (2) averages of the neighbor counts and relative neighbor type densities
+    ## check (3) avg distance to a nearest neighbor of the same type
+    ## check (4) avg distance to a nearest neighbor of the other type
+    ## check (5) other summaries:  sds and/or quantiles
+  }
+  return(stat.mat)
+}
+
+## Edit to select "simple" vs "detailed" features
+plotBigLittle <- function(img, lowcut = 200, hicut = 400) {
+  x <- data.frame(lowf)
+  x <- x[x$image == img, ]
+  plot(x$fvm.m.cx, x$fvm.m.cy,
+    xlab = "", ylab = "", las = 1,
+    main = paste0("Small vs Large, Image=", img), type = "n",
+    ylim = c(-0.2 * (max(x$fvm.m.cy) - min(x$fvm.m.cy)), max(x$fvm.m.cy))
+  )
+  small <- (x$fvs.s.area < lowcut)
+  large <- (x$fvs.s.area > hicut)
+  points(x$fvm.m.cx[small], x$fvm.m.cy[small], col = 1, pch = 16)
+  points(x$fvm.m.cx[large], x$fvm.m.cy[large], col = 4, pch = 16)
+  legend("bottomleft",
+    inset = 0.05,
+    legend = c("Likely Lymphocyte", "Likely Granuloma"),
+    col = c(1, 4), pch = 16
+  )
+}
+
+mbclust <- function(truncProbAt = 4, in.p = 0.75, out.p = 0.95, hicut = 400) {
+  ## truncProbAt = truncate probabilities at truncProbAt components
+  ## in.p within cluster probability content
+  ## out.p outside cluster probability content
+  ## Mahalanobis wiki page (https://en.wikipedia.org/wiki/Mahalanobis_distance):
+  ##   In 2 dimensions, if t=sqrt(-2*log(1-p)) Pr(d<t)=p,
+  ##   where d is sqrt of mahalanobis distance
+  ##   p=0.50: 1.177 = t = sqrt(-2*log(1-p))
+  ##   p=0.75: 1.665 = t = sqrt(-2*log(1-p))
+  ##   p=0.90: 2.146 = t = sqrt(-2*log(1-p))
+  ##   p=0.95: 2.448 = t = sqrt(-2*log(1-p))
+  in.t <- sqrt(-2 * log(1 - in.p)) ## (well) inside cluster
+  out.t <- sqrt(-2 * log(1 - out.p)) ## likely outside cluster
+  prob <- matrix(0.0, nrow = n.image, ncol = truncProbAt)
+  colnames(prob) <- paste0("pr(in clust ", 1:truncProbAt, ")")
+  PrMgvnData <- matrix(0, nrow = n.image, ncol = truncProbAt)
+  colnames(PrMgvnData) <- paste0("pr(n.clust = ", 1:truncProbAt, "|data)")
+  ## infilt<-matrix(NA,nrow=n.image,ncol=5)
+  ## colnames(infilt)<-c("densityInfilt","densityOut","relativeDens","areaInNode","areaOutNode")
+  infilt <- matrix(NA, nrow = n.image, ncol = 4)
+  colnames(infilt) <- c("densityInfilt", "densityOut", "areaInNode", "areaOutNode")
+  nClust <- rep(NA, n.image)
+  for (i in 1:n.image) {
+    ## cat("Mclust Image = ",i,"\n")
+    xyG.all <- lowf[lowf$image == i, ]
+    xyG <- xyG.all[xyG.all$fvs.s.area > hicut, c("fvm.m.cx", "fvm.m.cy")]
+    mc.out <- Mclust(xyG, verbose = FALSE)
+    mc.sum <- summary(mc.out, parameters = TRUE)
+    g <- mc.sum$G ## number of components
+    nClust[i] <- g
+    m <- mc.sum$mean
+    v <- mc.sum$variance
+    ## browser()
+    p <- sort(mc.sum$pro, decreasing = TRUE) ## component mixing probabilities
+    if (length(p) >= truncProbAt) {
+      prob[i, 1:(truncProbAt - 1)] <- p[1:(truncProbAt - 1)]
+      prob[i, truncProbAt] <- sum(p[truncProbAt:length(p)])
+    }
+    if (length(p) < truncProbAt) {
+      prob[i, 1:length(p)] <- p
+    }
+    b <- apply(mc.out$BIC, 1, max, na.rm = TRUE)
+    b <- (b - max(b, na.rm = TRUE)) ## BIC drop from max
+    b <- exp(b) / sum(exp(b)) ## bic approx to post probs (assume bic here is -BIC/2)
+    if (length(b) >= truncProbAt) {
+      PrMgvnData[i, 1:(truncProbAt - 1)] <- b[1:(truncProbAt - 1)]
+      PrMgvnData[i, truncProbAt] <- sum(b[truncProbAt:length(b)])
+    }
+    if (length(b) < truncProbAt) {
+      PrMgvnData[i, 1:length(b)] <- b
+    }
+    ## 1) approximate fraction of total area covered by nodes:
+    ## 2) infiltration: density of lymphocytes in nodes:
+    dist <- matrix(NA, nrow = nrow(xyG.all), ncol = g)
+    for (j in 1:g) {
+      dist[, j] <- mahalanobis(x = xyG.all[, c("fvm.m.cx", "fvm.m.cy")], center = m[, j], cov = v[, , j])
+    }
+    dist <- sqrt(dist)
+    d.min <- apply(dist, 1, min, na.rm = TRUE)
+    tot.area <- sum(xyG.all$fvs.s.area)
+    in.area <- sum(xyG.all$fvs.s.area[d.min < in.t])
+    out.area <- sum(xyG.all$fvs.s.area[d.min > out.t])
+    ## lymph size threshold is area<200 (see arguments to localDensity())
+    ## granu size threshold is area>400
+    in.lymph.area <- sum(xyG.all$fvs.s.area[(d.min < in.t) & (xyG.all$fvs.s.area < 200)])
+    out.lymph.area <- sum(xyG.all$fvs.s.area[(d.min > out.t) & (xyG.all$fvs.s.area < 200)])
+    in.dens <- ((in.lymph.area + 0.5) / (in.area + 1))
+    out.dens <- ((out.lymph.area + 0.5) / (out.area + 1))
+    ## rel.dens<-(in.dens+0.01)/(out.dens+0.01)
+    in.prop <- in.area / tot.area
+    out.prop <- out.area / tot.area
+    ## infilt[i,]<-c(in.dens,out.dens,rel.dens,in.prop,out.prop)
+    infilt[i, ] <- c(in.dens, out.dens, in.prop, out.prop)
+  }
+
+  mbc <- list(nClust = nClust, PrClust = prob, PrMgvnData = PrMgvnData, Infiltration = infilt)
+  return(mbc)
+}
+```
+
+
+```{r display-image-tesselations}
+img1 <- readImage("images/Picture1.png")
+par(mfrow = c(2, 2))
+display(img1, method = "raster")
+display(getFrame(img1, 1), method = "raster")
+display(getFrame(img1, 2), method = "raster")
+display(getFrame(img1, 3), method = "raster")
+```
+
+
+```{r image-tess-pdfs}
+# pdf(file = "voronoiSegs.detailed.pdf", height = 10, width = 6.5)
+detailedSeg <- sapply(FUN = imageSeg, 1:length(imageList), type = "detailed", simplify = FALSE)
+# dev.off()
+length(detailedSeg)
+names(detailedSeg) <- imageList
+names(detailedSeg[[1]])
+```
+
+
+```{r take-out-bad-image}
+detailedSeg <- detailedSeg[-12]
+length(detailedSeg)
+```
+
+
+```{r within-image-summaries}
+lowf <- NULL
+n.image <- length(imageList) - 1
+for (i in 1:n.image) {
+  temp <- get.lowlevel.features(i)
+  temp <- cbind(rep(i, nrow(temp)), temp)
+  lowf <- rbind(lowf, temp)
+  rm(temp)
+}
+
+dim(lowf)
+colnames(lowf)[1] <- "image"
+lowf <- data.frame(lowf)
+table(lowf$image)
+```
+
+
+```{r removing-bad-tiles}
+## TO REMOVE SPURIOUS BORDER TILES, threshold on lowf[,"fvs.s.radius.sd"]
+## < exp(2.25)=9.48
+## and fvs.s.area<2500
+par(mfrow = c(2, 1))
+hist(log(lowf[, "fvs.s.radius.sd"]), main = "log(SD of radius)", nclass = 60)
+abline(v = 2.25, lwd = 3, col = 2)
+hist(sqrt(lowf[, "fvs.s.area"]), main = "sqrt(Area)", nclass = 60)
+abline(v = sqrt(2500), lwd = 3, col = 2)
+lowf <- lowf[(lowf$fvs.s.radius.sd < 9.5) & (lowf$fvs.s.area < 2500), ]
+```
+
+
+```{r find-variable-metrics}
+img.effect <- matrix(NA, nrow = (ncol(lowf) - 1), ncol = 4)
+colnames(img.effect) <- c("TSS", "RegSS", "F", "Ratio")
+rownames(img.effect) <- colnames(lowf)[-1]
+for (i in 1:(ncol(lowf) - 1)) {
+  lm.out <- lm(lowf[, i + 1] ~ lowf[, i])
+  a.out <- anova(lm.out)
+  img.effect[i, 1] <- sum(a.out$"Sum Sq")
+  img.effect[i, 2] <- a.out$"Sum Sq"[1]
+  img.effect[i, 3] <- a.out$"F"[1]
+}
+img.effect[, 4] <- (img.effect[, 2] / img.effect[, 1])
+img.effect <- img.effect[order(img.effect[, 4]), ]
+hist(img.effect[, 4])
+```
+
+
+```{r effects-table}
+table(img.effect[, 4] > 0.65)
+keep <- rownames(img.effect)[img.effect[, 4] > 0.5]
+round(cor(lowf[, keep]), 2)
+```
+
+
+```{r}
+drop <- c(
+  "fvs.s.perimeter", "fvh.h.sav.s1", "fvs.s.radius.max", "fb.b.q005", "fvh.h.sva.s2",
+  "fh.h.ent.s2", "fvs.s.radius.sd"
+)
+f.keep <- keep[!(keep %in% drop)]
+cmat <- cor(lowf[, f.keep])
+diag(cmat) <- 0
+apply(abs(cmat), 1, max)
+```
+
+
+```{r image-level-summaries}
+imgFeatures <- sapply(FUN = get.features, 1:length(detailedSeg), threshold = 9.48)
+dim(imgFeatures)
+imgFeatures <- unique(t(imgFeatures))
+```
+
+
+
+```{r all-feature-stats-heatmap}
+fstats <- imgFeatures
+heatmap.2(fstats, scale = "column", trace = "none", main = "All Feature Stats")
+fstats <- scale(fstats)
+```
+
+
+```{r labeling-of-cells}
+plotBigLittle(img = 1)
+```
+
+
+```{r labeling-pdf}
+# pdf("BigVsLittle.pdf", height = 11, width = 8.5)
+# par(mfrow = c(2, 2))
+# for (i in 1:n.image) plotBigLittle(img = i)
+# dev.off()
+```
+
+
+```{r local-densities-heatmap}
+localD <- localDensity()
+localD <- unique(localD)
+heatmap.2(t(localD), scale = "row", trace = "none")
+```
+
+
+```{r extracting-summaries}
+col.keep <- c(11, 13:14, 16:17)
+round(cor(localD[, col.keep]), 2)
+```
+
+
+```{r extracted-variables-heatmap}
+heatmap.2(t(localD[, col.keep]), scale = "row", trace = "none")
+```
+
+
+```{r local-sumamries}
+lstats <- scale(localD[, col.keep])
+```
+
+
+```{r local-marginals}
+# pdf("BigVsSmallSummaries.pdf", height = 11, width = 8.5)
+# par(mfrow = c(3, 2))
+# for (i in 1:ncol(lstats)) {
+#   hist(lstats[, i], main = colnames(lstats)[i])
+# }
+# dev.off()
+```
+
+
+```{r mclust-metrics}
+mbc <- mbclust()
+mbc.all <- cbind(mbc$nClust, mbc$PrClust, mbc$PrMgvnData, mbc$Infiltration)
+colnames(mbc.all)[1] <- "nClust"
+
+mbc.all <- unique(mbc.all)
+mbcstats <- scale(mbc.all)
+```
+
+
+```{r mclust-features}
+mbc.sub <- cbind(
+  lOddsGis1 = logit(mbc.all[, "pr(n.clust = 2|data)"]),
+  avgAreaPerNode = (mbc.all[, "areaInNode"] / mbc.all[, "nClust"]),
+  densityRatio = (mbc.all[, "densityInfilt"] / mbc.all[, "densityOut"]),
+  densityOut = mbc.all[, "densityOut"]
+)
+head(mbc.sub)
+round(cor(mbc.sub), 3)
+heatmap.2(t(mbc.sub), scale = "row", trace = "none")
+```
+
+
+```{r combined-feature-set}
+all_features <- cbind(fstats, lstats, mbc.sub)
+heatmap.2(all_features, trace = "none", scale = "column")
+```
+
+
+```{r clust-variable-selection}
+clust_var_results <- clustvarsel(all_features, search = "headlong")
+```
+
+
+```{r clust-variable-contd}
+selected_indices_clustvar <- clust_var_results$subset
+allFeaturesClustVar <- all_features[, selected_indices_clustvar]
+heatmap.2(allFeaturesClustVar, scale = "column", trace = "none", main = "ClustVar Optimal Clustering")
+var(allFeaturesClustVar)
+```
+
+
+```{r vscc}
+vscc_result <- vscc(all_features)
+```
+
+
+```{r vscc-contd}
+selected_vars_vscc <- vscc_result$selected[[1]]
+heatmap.2(selected_vars_vscc, scale = "column", trace = "none", main = "VSCC Optimal Clustering")
+var(selected_vars_vscc)
+```
